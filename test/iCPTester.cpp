@@ -40,7 +40,20 @@ iCPTester::~iCPTester()
 
 void iCPTester::connect()
 {
-    qDebug() << "HAPPY TEST";
+    qDebug() << "trying to Connect";
     client->discoverAndConnect();
 }
 
+bool iCPTester::event(QEvent *event)
+{
+    switch (event->type()) {
+        case QEvent::KeyPress:
+        case QEvent::KeyRelease:
+        qDebug() << "keyEvent received";
+
+        default:
+            break;
+    }
+
+
+}

@@ -30,16 +30,37 @@
 #include <qbluetoothaddress.h>
 
 #define KiControlPadPollInterval 25
-//#define KiCPServiceName "iCP-SPP"
+#define KDigitalButtonsBytes 2
 const QString KiCPServiceName("iCP-SPP");
 #define CMD_GET_DIGITALS 0xA5
 #define CMD_GET_ANALOGS 0x87
 
-const quint32 getDigitalKeys = CMD_GET_DIGITALS;
+const quint16 getDigitalKeys = CMD_GET_DIGITALS;
+
+
+enum iCPButtons
+{
+  BUTTON_UP = 0x1,
+  BUTTON_DOWN = 0x8,
+  BUTTON_LEFT = 0x4,
+  BUTTON_RIGHT = 0x2,
+  BUTTON_START = 0x200,
+  BUTTON_SELECT = 0x100,
+  BUTTON_X = 0x1000,
+  BUTTON_A = 0x800,
+  BUTTON_Y = 0x400,
+  BUTTON_B = 0x2000,
+  BUTTON_LR = 0x4000,
+  BUTTON_LL = 10,
+  BUTTON_NONE = 0x00
+};
+
+
 iControlPadClient::iControlPadClient() :
     m_connected(false),
     m_discoveryAgent(new QBluetoothServiceDiscoveryAgent() ),
-    m_socket( NULL )
+    m_socket( NULL ),
+    m_DigitalButtons(0)
 {
     connect(m_discoveryAgent, SIGNAL(serviceDiscovered(QBluetoothServiceInfo)),
                  this, SLOT(serviceDiscovered(QBluetoothServiceInfo)));
@@ -52,20 +73,25 @@ iControlPadClient::~iControlPadClient()
 {
 }
 
+void iControlPadClient::subscribeKeyEvent(QObject* aObject )
+{
+    m_receiver = aObject;
+}
 
 void iControlPadClient::run()
 {
-    char* buttonData = (char*) new quint32[2];
+    quint16 buttonData;
     while (m_connected) {
         //send get request to the iCP
         m_socket->write( (char*)&getDigitalKeys );
         qint64 bytesAvailable = m_socket->bytesAvailable ();
-        if( bytesAvailable ){
-            m_socket->read(buttonData, 2);
-            qDebug() << "Button Data is " << buttonData;
+        if( bytesAvailable >= KDigitalButtonsBytes ){
+            m_socket->read((char*) &buttonData, KDigitalButtonsBytes);
+            qDebug() << "Button Data is" << buttonData;
         }
         QThread::msleep(KiControlPadPollInterval);
     }
+
 }
 
 void iControlPadClient::discoverAndConnect()
@@ -90,8 +116,6 @@ void iControlPadClient::serviceDiscovered(const QBluetoothServiceInfo &serviceIn
              << serviceInfo.protocolServiceMultiplexer();
     qDebug() << "\tRFCOMM server channel:" << serviceInfo.serverChannel();
 
-
-
     if(  QString::compare ( serviceInfo.serviceName(), KiCPServiceName, Qt::CaseInsensitive ) == 0 )
         connectToService( serviceInfo );
 }
@@ -107,7 +131,7 @@ void iControlPadClient::connectToService(const QBluetoothServiceInfo &remoteServ
     m_socket->connectToService(remoteService);
     qDebug() << "Connecte Service done";
     connect(m_socket, SIGNAL(connected()), this, SLOT(connected()));
-    connect(m_socket, SIGNAL(disconnected()), this, SIGNAL(disconnected()));
+    connect(m_socket, SIGNAL(disconnected()), this, SLOT(disconnected()));
 }
 
 
@@ -120,6 +144,7 @@ void iControlPadClient::connected()
     m_connected = true;
     qDebug() << "Connected to the iControlPad, starting the polling loop";
     start(QThread::NormalPriority);
+    emit( connectedToiControlPad() );
 }
 
 void iControlPadClient::disconnected()

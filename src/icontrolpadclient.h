@@ -47,6 +47,7 @@ public:
 
 public:
     void discoverAndConnect();
+    void subscribeKeyEvent(QObject* aObject );
 
 signals:
     void connectedToiControlPad();
@@ -61,15 +62,16 @@ public slots:
 
 private:
      void connectToService(const QBluetoothServiceInfo &remoteService);
-
+     void parseDigitalKeyData();
 protected:
     bool m_connected;
+    QObject* m_receiver;
 
     QBluetoothServiceDiscoveryAgent *m_discoveryAgent;
     QBluetoothServiceInfo m_service;
     QBluetoothSocket* m_socket;
 
-
+    quint16 m_DigitalButtons;
 };
 
 #endif // ICONTROLPADCLIENT_H

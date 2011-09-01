@@ -27,6 +27,7 @@
 #define ICPTESTER_H
 
 #include <QObject>
+#include <QEvent>
 
 #include "icontrolpadclient.h"
 
@@ -38,8 +39,10 @@ public:
     iCPTester( QObject *parent=0 );
     ~iCPTester();
 
+public:
+    bool event(QEvent *event);
+
 public slots:
-    //functions for properties
     void connect();
 
 private: //data
