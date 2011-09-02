@@ -26,7 +26,7 @@
 #define ICONTROLPADCLIENT_H
 
 #include <QObject>
-#include <Qthread>
+#include <QTimer>
 
 
 #include <qbluetoothuuid.h>
@@ -36,42 +36,63 @@
 
 QTM_USE_NAMESPACE
 
-class iControlPadClient : public QThread
+class iControlPadClient : public QObject
 {
     Q_OBJECT
 
 public:
-    iControlPadClient();
-    ~iControlPadClient();
-    virtual void run();
+    enum iCPReadableKeyEvent{
+        iCPReadDigital = 1,
+        iCPReadAnalog = 2,
+        iCPReadDigitalAndAnalog = 3
+    };
 
 public:
-    void discoverAndConnect();
+    iControlPadClient( QObject* parent = 0 );
+    ~iControlPadClient();
+
+public:
+    void discoverAndConnect( iCPReadableKeyEvent readKeys );
     void subscribeKeyEvent(QObject* aObject );
 
 signals:
     void connectedToiControlPad();
+    void iControlPadNotFound();
+    void analogNubsUpdated( qint8 l_x, qint8 l_y, qint8 r_x, qint8 r_y );
 
 private slots:
-     void serviceDiscovered(const QBluetoothServiceInfo &serviceInfo);
-     void discoveryFinished();
-     void connected();
-     void disconnected();
+    void serviceDiscovered(const QBluetoothServiceInfo &serviceInfo);
+    void connected();
+    void disconnected();
+    void discoveryFinished();
+    void readControlPadKeys();
+    void readSocket();
 
-public slots:
 
 private:
      void connectToService(const QBluetoothServiceInfo &remoteService);
-     void parseDigitalKeyData();
+     void updateDigitalButtons(quint16 keys);
+     void updateAnalogNubs(quint32 nubs);
+
+private:
+     enum eDataRequested{
+        eDigitalButtons = 1,
+        eAnalogButtons =2
+     };
+
 protected:
     bool m_connected;
-    QObject* m_receiver;
+    int m_readProperties;
+    QList<eDataRequested> m_dataRequested;
 
+    QObject* m_receiver;
+    QTimer* m_timer;
     QBluetoothServiceDiscoveryAgent *m_discoveryAgent;
     QBluetoothServiceInfo m_service;
     QBluetoothSocket* m_socket;
 
     quint16 m_DigitalButtons;
+    quint32 m_AnalogButtons;
 };
 
 #endif // ICONTROLPADCLIENT_H

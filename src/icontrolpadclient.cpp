@@ -25,18 +25,20 @@
 #include "icontrolpadclient.h"
 
 #include <QThread>
-
+#include <QApplication>
+#include <QKeyEvent>
 #include <qbluetoothdeviceinfo.h>
 #include <qbluetoothaddress.h>
 
 #define KiControlPadPollInterval 25
 #define KDigitalButtonsBytes 2
+#define KAnalogButtonsBytes 4
 const QString KiCPServiceName("iCP-SPP");
 #define CMD_GET_DIGITALS 0xA5
 #define CMD_GET_ANALOGS 0x87
 
 const quint16 getDigitalKeys = CMD_GET_DIGITALS;
-
+const quint16 getAnaloglNubs = CMD_GET_ANALOGS;
 
 enum iCPButtons
 {
@@ -56,21 +58,32 @@ enum iCPButtons
 };
 
 
-iControlPadClient::iControlPadClient() :
+iControlPadClient::iControlPadClient( QObject* parent ) :
+    QObject(parent),
     m_connected(false),
     m_discoveryAgent(new QBluetoothServiceDiscoveryAgent() ),
     m_socket( NULL ),
-    m_DigitalButtons(0)
+    m_DigitalButtons(0),
+    m_AnalogButtons(0),
+    m_readProperties(0)
 {
     connect(m_discoveryAgent, SIGNAL(serviceDiscovered(QBluetoothServiceInfo)),
                  this, SLOT(serviceDiscovered(QBluetoothServiceInfo)));
 
     connect(m_discoveryAgent, SIGNAL(finished()), this, SLOT(discoveryFinished()));
 
+    m_timer = new QTimer(this);
+    connect(m_timer, SIGNAL(timeout()), this, SLOT(readControlPadKeys()));
+
+    m_receiver = parent;
+
 }
 
 iControlPadClient::~iControlPadClient()
 {
+    delete m_discoveryAgent;
+    m_socket->disconnect();
+    delete m_socket;
 }
 
 void iControlPadClient::subscribeKeyEvent(QObject* aObject )
@@ -78,30 +91,65 @@ void iControlPadClient::subscribeKeyEvent(QObject* aObject )
     m_receiver = aObject;
 }
 
-void iControlPadClient::run()
+void iControlPadClient::readControlPadKeys()
 {
-    quint16 buttonData;
-    while (m_connected) {
+    //read digital
+    if( m_readProperties & iCPReadDigital ){
+        quint16 buttonData;
         //send get request to the iCP
         m_socket->write( (char*)&getDigitalKeys );
-        qint64 bytesAvailable = m_socket->bytesAvailable ();
-        if( bytesAvailable >= KDigitalButtonsBytes ){
-            m_socket->read((char*) &buttonData, KDigitalButtonsBytes);
-            qDebug() << "Button Data is" << buttonData;
+        m_dataRequested.append(eDigitalButtons);
+    }
+
+    //read analog
+    //something is still wrong with the analog logic...
+    /*
+     if( m_readProperties & iCPReadAnalog ){
+        quint32 nubs;
+         m_socket->write( (char*)&getAnaloglNubs );
+         m_dataRequested.append(eAnalogButtons);
+     }*/
+}
+void iControlPadClient::readSocket()
+{
+    while( m_socket->bytesAvailable() ){
+        if( m_dataRequested.isEmpty() ){
+            //should not be empty, if so, then flush the socket
+            m_socket->readAll();
         }
-        QThread::msleep(KiControlPadPollInterval);
+        else if( m_dataRequested.first() == eDigitalButtons ){
+            quint16 buttonData;
+            m_socket->read((char*) &buttonData, KDigitalButtonsBytes);
+            updateDigitalButtons(buttonData);
+            m_dataRequested.removeFirst();
+        }
+        else if( m_dataRequested.first() == eAnalogButtons  ){
+            quint32 nubs;
+            m_socket->read((char*) &nubs, KAnalogButtonsBytes);
+            updateAnalogNubs(nubs);
+            m_dataRequested.removeFirst();
+        }
+        else{
+            //should not happen, flush socket, to continue...
+            m_socket->readAll();
+        }
     }
 
 }
 
-void iControlPadClient::discoverAndConnect()
+void iControlPadClient::discoverAndConnect(iCPReadableKeyEvent readKeys)
 {
     if (m_discoveryAgent->isActive())
             m_discoveryAgent->stop();
 
-     m_discoveryAgent->start();
+    m_readProperties = readKeys;
+    m_discoveryAgent->start();
 }
 
+void iControlPadClient::discoveryFinished()
+{
+    emit ( iControlPadNotFound() );
+}
 
 void iControlPadClient::serviceDiscovered(const QBluetoothServiceInfo &serviceInfo)
 {
@@ -130,20 +178,16 @@ void iControlPadClient::connectToService(const QBluetoothServiceInfo &remoteServ
     qDebug() << "Create socket";
     m_socket->connectToService(remoteService);
     qDebug() << "Connecte Service done";
+    connect(m_socket, SIGNAL(readyRead()), this, SLOT(readSocket()));
     connect(m_socket, SIGNAL(connected()), this, SLOT(connected()));
     connect(m_socket, SIGNAL(disconnected()), this, SLOT(disconnected()));
-}
-
-
-void iControlPadClient::discoveryFinished()
-{
 }
 
 void iControlPadClient::connected()
 {
     m_connected = true;
     qDebug() << "Connected to the iControlPad, starting the polling loop";
-    start(QThread::NormalPriority);
+    m_timer->start(KiControlPadPollInterval);
     emit( connectedToiControlPad() );
 }
 
@@ -153,3 +197,129 @@ void iControlPadClient::disconnected()
     m_connected = false;
 }
 
+void iControlPadClient::updateDigitalButtons( quint16 keys )
+{
+    //if no update, then return
+    if( keys == m_DigitalButtons )
+        return;
+
+    //qDebug() << "prev keys " << m_DigitalButtons << "new keys " << keys;
+
+    //update released buttons
+    quint16 tmp =  m_DigitalButtons & ~keys;
+    if( tmp & BUTTON_UP ){
+      QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Up,0,0 );
+      QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_DOWN ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Down,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LEFT ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Left,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_RIGHT ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Right,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_START ){
+         QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Return,0,0 );
+         QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_SELECT ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_Space,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_X ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_W,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_Y ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_A,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_B ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_S,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_A ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_D,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LR ){
+        QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_R,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LL ){
+         QKeyEvent e(QKeyEvent::KeyRelease,Qt::Key_F,0,0 );
+         QApplication::sendEvent(m_receiver,&e);
+    }
+
+    //update pressed buttons
+    tmp = ~m_DigitalButtons & keys;
+    if( tmp & BUTTON_UP ){
+      QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Up,0,0 );
+      QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_DOWN ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Down,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LEFT ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Left,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_RIGHT ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Right,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_START ){
+         QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Return,0,0 );
+         QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_SELECT ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_Space,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_X ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_W,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_Y ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_A,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_B ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_S,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_A ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_D,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LR ){
+        QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_R,0,0 );
+        QApplication::sendEvent(m_receiver,&e);
+    }
+    if( tmp & BUTTON_LL ){
+         QKeyEvent e(QKeyEvent::KeyPress,Qt::Key_F,0,0 );
+         QApplication::sendEvent(m_receiver,&e);
+    }
+
+    m_DigitalButtons = keys;
+}
+
+void iControlPadClient::updateAnalogNubs( quint32 nubs )
+{
+    if( m_AnalogButtons == nubs )
+        return;
+
+    qint8 n_x = nubs & 0xFF;
+    qint8 n_y = nubs >> 8 & 0xFF;
+    qint8 m_x = nubs >> 16 & 0xFF;
+    qint8 m_y = nubs >> 24;
+    qDebug() << "N_X: " << n_x << "N_Y: " << n_y << "M_X: " << m_x << "M_Y: " << m_y;
+    emit(analogNubsUpdated( n_x,  n_y, m_x, m_y ) );
+    m_AnalogButtons = nubs;
+}

@@ -29,7 +29,7 @@
 iCPTester::iCPTester(QObject *parent)
     : QObject(parent)
 {
-    client = new iControlPadClient();
+    client = new iControlPadClient(this);
 }
 
 
@@ -41,7 +41,7 @@ iCPTester::~iCPTester()
 void iCPTester::connect()
 {
     qDebug() << "trying to Connect";
-    client->discoverAndConnect();
+    client->discoverAndConnect( iControlPadClient::iCPReadDigitalAndAnalog );
 }
 
 bool iCPTester::event(QEvent *event)
@@ -49,8 +49,7 @@ bool iCPTester::event(QEvent *event)
     switch (event->type()) {
         case QEvent::KeyPress:
         case QEvent::KeyRelease:
-        qDebug() << "keyEvent received";
-
+        //qDebug() << "keyEvent received";
         default:
             break;
     }
