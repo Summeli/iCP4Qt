@@ -14,6 +14,7 @@ gpsp is distributed under [MIT license](https://github.com/Summeli/iCP4Qt/blob/m
 
 Contributing
 -------
+
 The code is available to download at GitHub. Contribute if you dare!
 
 
